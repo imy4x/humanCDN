@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 import { 
@@ -14,7 +14,6 @@ import {
   MessageSquare,
   Send,
   Scan,
-  ArrowRight,
   Monitor,
   Smartphone
 } from 'lucide-react';
@@ -32,16 +31,15 @@ const formatBytes = (bytes: number, decimals = 2) => {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 };
 
-// --- Chat Component (Defined OUTSIDE App to fix focus loss) ---
-interface ChatBoxProps {
+// --- ISOLATED COMPONENTS (Fixes Focus Issue) ---
+
+const ChatBox = ({ messages, input, setInput, onSend, isConnected }: {
     messages: ChatMessage[];
     input: string;
     setInput: (val: string) => void;
     onSend: (e?: React.FormEvent) => void;
     isConnected: boolean;
-}
-
-const ChatBox: React.FC<ChatBoxProps> = ({ messages, input, setInput, onSend, isConnected }) => {
+}) => {
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -99,7 +97,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ messages, input, setInput, onSend, is
     );
 };
 
-// --- File List Component ---
 const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: string[]) => void }) => (
     <div className="space-y-3 max-h-[500px] overflow-y-auto pl-2 custom-scrollbar">
         {items.map(item => (
@@ -134,7 +131,7 @@ const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: 
                         <p className="font-bold truncate text-sm" title={item.meta.name}>{item.meta.name}</p>
                         <p className="text-xs text-gray-400 mt-1">
                           {item.state === TransferState.PENDING && (item.isIncoming ? 'بانتظار قبولك' : 'بانتظار قبول الطرف الآخر')}
-                          {item.state === TransferState.QUEUED && 'جاري البدء...'}
+                          {item.state === TransferState.QUEUED && 'في الطابور...'}
                           {item.state === TransferState.TRANSFERRING && `جاري النقل ${item.progress.toFixed(0)}%`}
                           {item.state === TransferState.COMPLETED && 'اكتمل'}
                         </p>
@@ -158,7 +155,6 @@ const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: 
                     )}
                 </div>
 
-                {/* Progress Bar */}
                 {(item.state === TransferState.TRANSFERRING || item.state === TransferState.COMPLETED) && (
                     <div className="h-1 bg-gray-800 rounded-full overflow-hidden w-full dir-ltr">
                         <div 
@@ -178,6 +174,164 @@ const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: 
     </div>
 );
 
+const HomeView = ({ onHost, onGuest }: { onHost: () => void, onGuest: () => void }) => (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-12 animate-fade-in p-6">
+        <div className="text-center space-y-4 max-w-2xl">
+            <h2 className="text-4xl md:text-6xl font-bold tracking-tight">
+                شبكة الملفات <span className="text-neon-blue neon-text">البشرية</span>
+            </h2>
+            <p className="text-gray-400 text-lg md:text-xl leading-relaxed">
+                أنشئ اتصالاً مباشراً (P2P) بين جهازين. <br/>
+                تبادل ملفات وتطبيقات بلا حدود. دردش بخصوصية.
+            </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-2xl">
+            <div className="glass p-8 rounded-xl hover:border-neon-blue/50 transition-all cursor-pointer flex flex-col items-center text-center space-y-6 group"
+                 onClick={onHost}>
+                <div className="w-20 h-20 bg-neon-blue/10 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Monitor size={40} className="text-neon-blue" />
+                </div>
+                <div>
+                    <h3 className="text-2xl font-bold mb-2">إنشاء غرفة</h3>
+                    <p className="text-gray-400">سأقوم بإنشاء الرابط ومشاركته.</p>
+                </div>
+                <Button className="w-full">بدء جلسة</Button>
+            </div>
+
+            <div className="glass p-8 rounded-xl hover:border-purple-500/50 transition-all cursor-pointer flex flex-col items-center text-center space-y-6 group"
+                 onClick={onGuest}>
+                <div className="w-20 h-20 bg-purple-500/10 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Smartphone size={40} className="text-purple-400" />
+                </div>
+                <div>
+                    <h3 className="text-2xl font-bold mb-2">انضمام لغرفة</h3>
+                    <p className="text-gray-400">لدي كود أو سأمسح الباركود.</p>
+                </div>
+                <Button variant="secondary" className="w-full">اتصال</Button>
+            </div>
+        </div>
+    </div>
+);
+
+const ConnectionView = ({ 
+    mode, peerId, shareLink, remotePeerId, setRemotePeerId, initGuest, resetApp, isScanning, startScanner, stopScanner, connectionState 
+}: any) => {
+    if (mode === AppMode.HOST) {
+        return (
+            <div className="max-w-md mx-auto glass rounded-xl p-8 space-y-6 text-center animate-fade-in">
+                <h2 className="text-2xl font-bold mb-2">بانتظار الطرف الآخر...</h2>
+                {peerId ? (
+                    <>
+                    <div className="bg-white p-4 rounded-xl mx-auto w-fit">
+                        <QRCodeSVG value={shareLink} size={200} />
+                    </div>
+                    <div className="space-y-4 pt-4">
+                        <div className="bg-black/50 p-3 rounded flex items-center justify-between gap-2 border border-white/10 text-right">
+                            <button onClick={() => navigator.clipboard.writeText(peerId)} className="text-gray-400 hover:text-white p-2">
+                                <Copy size={16} />
+                            </button>
+                            <code className="text-sm text-neon-blue font-mono truncate dir-ltr text-center flex-1">{peerId}</code>
+                        </div>
+                        <p className="text-xs text-gray-500">شارك هذا الكود أو اجعل الطرف الآخر يمسح الباركود</p>
+                    </div>
+                    </>
+                ) : (
+                    <div className="py-12"><div className="w-12 h-12 border-4 border-neon-blue border-t-transparent rounded-full animate-spin mx-auto"></div></div>
+                )}
+                <Button variant="secondary" onClick={resetApp} className="w-full text-xs mt-4">إلغاء</Button>
+            </div>
+        );
+    } 
+    
+    return (
+        <div className="max-w-md mx-auto glass rounded-xl p-8 space-y-6 animate-fade-in">
+            <h2 className="text-2xl font-bold text-center">الاتصال بغرفة</h2>
+            
+            {!isScanning ? (
+                <>
+                <div className="space-y-2">
+                    <label className="text-sm text-gray-400">معرف الغرفة (Host ID)</label>
+                    <input 
+                        type="text" 
+                        value={remotePeerId}
+                        onChange={(e) => setRemotePeerId(e.target.value)}
+                        placeholder="لصق المعرف هنا..."
+                        className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-3 focus:border-purple-500 focus:outline-none transition-all font-mono text-center"
+                    />
+                </div>
+                <Button onClick={() => initGuest()} disabled={!remotePeerId} className="w-full">
+                    {connectionState === 'CONNECTING' ? 'جاري الاتصال...' : 'دخول'}
+                </Button>
+                
+                <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10"></div></div>
+                    <div className="relative flex justify-center"><span className="bg-[#111] px-2 text-xs text-gray-500">أو</span></div>
+                </div>
+
+                <Button variant="secondary" className="w-full" onClick={startScanner}>
+                    <Scan size={18} /> مسح QR Code
+                </Button>
+                </>
+            ) : (
+                <div className="space-y-4">
+                    <div className="overflow-hidden rounded-lg border border-neon-blue relative shadow-[0_0_20px_rgba(0,243,255,0.2)]">
+                        <div id="reader" className="w-full"></div>
+                    </div>
+                    <Button variant="secondary" onClick={stopScanner} className="w-full">إلغاء الكاميرا</Button>
+                </div>
+            )}
+            <Button variant="secondary" onClick={resetApp} className="w-full text-xs !bg-transparent !border-0 text-gray-500 hover:text-white mt-2">رجوع</Button>
+        </div>
+    );
+};
+
+const SessionView = ({ transfers, acceptFiles, handleFileSelection, chatMessages, chatInput, setChatInput, handleSendChat, connectionState }: any) => (
+    <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in p-4">
+        <div className="lg:col-span-2 glass rounded-xl p-6 flex flex-col h-[600px]">
+            <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+                <div>
+                    <h2 className="text-xl font-bold flex items-center gap-2">
+                        <FileIcon className="text-neon-blue" size={20} />
+                        المدير الملفات
+                    </h2>
+                    <p className="text-xs text-gray-400 mt-1">
+                        {transfers.length} ملفات في القائمة
+                    </p>
+                </div>
+                
+                <div className="flex gap-2">
+                    <input 
+                        type="file" 
+                        id="session-upload" 
+                        className="hidden" 
+                        multiple
+                        // Removed accept attribute to allow all files/apps
+                        onChange={(e) => handleFileSelection(e.target.files)}
+                    />
+                    <Button onClick={() => document.getElementById('session-upload')?.click()}>
+                        <Upload size={18} /> إرفاق ملفات/تطبيقات
+                    </Button>
+                </div>
+            </div>
+            <div className="flex-1 overflow-hidden relative">
+                <FileList items={transfers} onAccept={acceptFiles} />
+            </div>
+        </div>
+
+        <div className="lg:col-span-1 h-full">
+            <ChatBox 
+            messages={chatMessages} 
+            input={chatInput} 
+            setInput={setChatInput} 
+            onSend={handleSendChat} 
+            isConnected={connectionState === 'CONNECTED'}
+            />
+        </div>
+    </div>
+);
+
+// --- MAIN APP COMPONENT ---
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>(AppMode.HOME);
@@ -186,25 +340,26 @@ const App: React.FC = () => {
   const [remotePeerId, setRemotePeerId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   
-  // State for file list
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
+  // Use a ref to access latest transfers inside callbacks without dependency loops or stale closures
+  const transfersRef = useRef<TransferItem[]>([]); 
   
-  // Chat State
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   
-  // Scanner State
   const [isScanning, setIsScanning] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
 
-  // Receiver buffer map
   const receivedChunks = useRef<Map<string, ArrayBuffer[]>>(new Map());
   const receivedBytes = useRef<Map<string, number>>(new Map());
 
-  // URL Hash Handling
+  // Sync ref with state
+  useEffect(() => {
+    transfersRef.current = transfers;
+  }, [transfers]);
+
   useEffect(() => {
     const hash = window.location.hash;
-    // Just one logic for joining: #/join?id=...
     if (hash.startsWith('#/join')) {
       const params = new URLSearchParams(hash.split('?')[1]);
       const id = params.get('id');
@@ -214,8 +369,6 @@ const App: React.FC = () => {
       }
     }
   }, []);
-
-  // --- Logic Helpers ---
 
   const handleFileSelection = (fileList: FileList | null) => {
     if (!fileList) return;
@@ -227,116 +380,27 @@ const App: React.FC = () => {
             file: f,
             meta: { id, name: f.name, size: f.size, type: f.type },
             progress: 0,
-            state: TransferState.IDLE, // I am sending, waiting to push offer
+            state: TransferState.IDLE, 
             isIncoming: false
         };
     });
     
-    // Optimistic UI update
     setTransfers(prev => [...prev, ...newFiles]);
 
-    // Send Offer Immediately for these new files
-    // We filter just the new ones to send offer
+    // Send Offer
     const metas = newFiles.map(f => f.meta);
     if (connectionState === 'CONNECTED') {
         peerService.sendOffer(metas);
-        // Update state to QUEUED (Waiting for answer)
         setTransfers(prev => prev.map(t => newFiles.find(nf => nf.id === t.id) ? { ...t, state: TransferState.PENDING } : t));
     }
   };
 
-  const initHost = async () => {
-    setConnectionState('CONNECTING');
-    try {
-        const id = await peerService.initialize();
-        setPeerId(id);
-        
-        peerService.onConnection = (conn) => {
-            setConnectionState('CONNECTED');
-        };
-        
-        setupDataListeners();
-        
-        peerService.onError = (err) => {
-            setError('انقطع الاتصال');
-            setConnectionState('DISCONNECTED');
-        };
-    } catch (e) {
-        setError("فشل تهيئة الشبكة");
-    }
-  };
-
-  const initGuest = async (overrideId?: string) => {
-    const targetId = overrideId || remotePeerId;
-    if (!targetId) return;
-    
-    let finalId = targetId;
-    if (targetId.includes('?id=')) {
-        const match = targetId.match(/[?&]id=([^&]+)/);
-        if (match) finalId = match[1];
-    }
-
-    setRemotePeerId(finalId);
-    setConnectionState('CONNECTING');
-    try {
-        await peerService.initialize();
-        peerService.connect(finalId);
-        
-        peerService.onConnection = () => {
-            setConnectionState('CONNECTED');
-            setIsScanning(false);
-        };
-
-        setupDataListeners();
-        
-        peerService.onError = (err) => {
-            setError('فشل الاتصال بالمضيف');
-            setConnectionState('DISCONNECTED');
-        };
-    } catch (e) {
-        setError("فشل الاتصال");
-    }
-  };
-
-  const startScanner = () => {
-      setIsScanning(true);
-      setTimeout(() => {
-          const html5QrCode = new Html5Qrcode("reader");
-          scannerRef.current = html5QrCode;
-          html5QrCode.start(
-            { facingMode: "environment" }, 
-            {
-                fps: 10,
-                qrbox: { width: 250, height: 250 }
-            },
-            (decodedText) => {
-                html5QrCode.stop().then(() => {
-                     scannerRef.current = null;
-                     setIsScanning(false);
-                     initGuest(decodedText);
-                }).catch(err => console.error(err));
-            },
-            (errorMessage) => {}
-          ).catch(err => {
-              setError("فشل تشغيل الكاميرا");
-              setIsScanning(false);
-          });
-      }, 100);
-  };
-
-  const stopScanner = () => {
-      if (scannerRef.current) {
-          scannerRef.current.stop().then(() => {
-              scannerRef.current = null;
-              setIsScanning(false);
-          }).catch(console.error);
-      } else {
-          setIsScanning(false);
-      }
-  };
-
-  const setupDataListeners = () => {
-    peerService.onData = (data: any) => {
+  // Define this OUTSIDE init functions so it doesn't get redefined
+  // But it needs access to state setters. 
+  // IMPORTANT: Since we use peerService.onData (a singleton callback), 
+  // we must ensure it can access the LATEST state. 
+  // Using transfersRef.current solves the stale closure issue for sending files.
+  const handleData = (data: any) => {
         if (data.type === 'chat') {
             setChatMessages(prev => [...prev, {
                 id: crypto.randomUUID(),
@@ -346,12 +410,11 @@ const App: React.FC = () => {
             }]);
         }
         else if (data.type === 'offer') {
-            // Incoming file offer
             const newTransfers: TransferItem[] = data.files.map((m: FileMeta) => ({
                 id: m.id,
                 meta: m,
                 progress: 0,
-                state: TransferState.PENDING, // Waiting for ME to accept
+                state: TransferState.PENDING, 
                 isIncoming: true
             }));
             setTransfers(prev => {
@@ -360,10 +423,8 @@ const App: React.FC = () => {
             });
         }
         else if (data.type === 'answer') {
-             // Peer accepted my files -> Start sending
-             const acceptedIds = new Set(data.fileIds);
-             
-             // 1. Update UI to TRANSFERRING immediately for better feedback
+             // Explicitly cast to string[] to satisfy TypeScript in sendFiles
+             const acceptedIds = new Set(data.fileIds as string[]);
              setTransfers(prev => prev.map(t => {
                  if (acceptedIds.has(t.id)) {
                      return { ...t, state: TransferState.TRANSFERRING };
@@ -371,8 +432,29 @@ const App: React.FC = () => {
                  return t;
              }));
              
-             // 2. Actually Start Transfer
-             startTransfer(data.fileIds);
+             // Access files from REF to avoid stale state
+             const currentTransfers = transfersRef.current;
+             const filesObjects = currentTransfers
+                .filter(t => acceptedIds.has(t.id) && t.file && !t.isIncoming)
+                .map(t => t.file!);
+             
+             if (filesObjects.length > 0) {
+                 peerService.sendFiles(filesObjects, Array.from(acceptedIds), (fileId, bytesSent) => {
+                    setTransfers(prev => prev.map(t => {
+                        if (t.id === fileId) {
+                            return { 
+                                ...t, 
+                                progress: (bytesSent / t.meta.size) * 100, 
+                                state: TransferState.TRANSFERRING 
+                            };
+                        }
+                        return t;
+                    }));
+                 }).catch(e => {
+                     console.error(e);
+                     setError("خطأ أثناء النقل");
+                 });
+             }
         }
         else if (data.type === 'chunk') {
             const { fileId, data: chunkData } = data;
@@ -408,35 +490,97 @@ const App: React.FC = () => {
                 return t;
             }));
         }
-    };
+  };
+
+  const initHost = async () => {
+    setConnectionState('CONNECTING');
+    try {
+        const id = await peerService.initialize();
+        setPeerId(id);
+        
+        peerService.onConnection = (conn) => {
+            setConnectionState('CONNECTED');
+        };
+        peerService.onData = handleData; // Hook up handler
+        
+        peerService.onError = (err) => {
+            setError('انقطع الاتصال');
+            setConnectionState('DISCONNECTED');
+        };
+    } catch (e) {
+        setError("فشل تهيئة الشبكة");
+    }
+  };
+
+  const initGuest = async (overrideId?: string) => {
+    const targetId = overrideId || remotePeerId;
+    if (!targetId) return;
+    
+    let finalId = targetId;
+    if (targetId.includes('?id=')) {
+        const match = targetId.match(/[?&]id=([^&]+)/);
+        if (match) finalId = match[1];
+    }
+
+    setRemotePeerId(finalId);
+    setConnectionState('CONNECTING');
+    try {
+        await peerService.initialize();
+        peerService.connect(finalId);
+        
+        peerService.onConnection = () => {
+            setConnectionState('CONNECTED');
+            setIsScanning(false);
+        };
+        peerService.onData = handleData; // Hook up handler
+
+        peerService.onError = (err) => {
+            setError('فشل الاتصال بالمضيف');
+            setConnectionState('DISCONNECTED');
+        };
+    } catch (e) {
+        setError("فشل الاتصال");
+    }
+  };
+
+  // ... Scanner methods same as before ...
+  const startScanner = () => {
+      setIsScanning(true);
+      setTimeout(() => {
+          const html5QrCode = new Html5Qrcode("reader");
+          scannerRef.current = html5QrCode;
+          html5QrCode.start(
+            { facingMode: "environment" }, 
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText) => {
+                html5QrCode.stop().then(() => {
+                     scannerRef.current = null;
+                     setIsScanning(false);
+                     initGuest(decodedText);
+                }).catch(err => console.error(err));
+            },
+            () => {}
+          ).catch(err => {
+              setError("فشل تشغيل الكاميرا");
+              setIsScanning(false);
+          });
+      }, 100);
+  };
+
+  const stopScanner = () => {
+      if (scannerRef.current) {
+          scannerRef.current.stop().then(() => {
+              scannerRef.current = null;
+              setIsScanning(false);
+          }).catch(console.error);
+      } else {
+          setIsScanning(false);
+      }
   };
 
   const acceptFiles = (fileIds: string[]) => {
       peerService.sendAnswer(fileIds);
       setTransfers(prev => prev.map(t => fileIds.includes(t.id) ? { ...t, state: TransferState.QUEUED } : t)); 
-      // State becomes QUEUED locally while we wait for the first chunk
-  };
-
-  const startTransfer = (fileIds: string[]) => {
-      // Find the actual file objects in my state
-      const filesObjects = transfers
-        .filter(t => fileIds.includes(t.id) && t.file && !t.isIncoming)
-        .map(t => t.file!);
-      
-      if (filesObjects.length === 0) return;
-
-      peerService.sendFiles(filesObjects, fileIds, (fileId, bytesSent) => {
-          setTransfers(prev => prev.map(t => {
-              if (t.id === fileId) {
-                  return { 
-                      ...t, 
-                      progress: (bytesSent / t.meta.size) * 100, 
-                      state: TransferState.TRANSFERRING 
-                  };
-              }
-              return t;
-          }));
-      }).catch(e => setError("خطأ أثناء النقل"));
   };
 
   const handleSendChat = (e?: React.FormEvent) => {
@@ -470,171 +614,8 @@ const App: React.FC = () => {
 
   const shareLink = `${window.location.origin}${window.location.pathname}#/join?id=${peerId}`;
 
-  // --- Main Render Views ---
-
-  const HomeView = () => (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-12 animate-fade-in p-6">
-        <div className="text-center space-y-4 max-w-2xl">
-            <h2 className="text-4xl md:text-6xl font-bold tracking-tight">
-                شبكة الملفات <span className="text-neon-blue neon-text">البشرية</span>
-            </h2>
-            <p className="text-gray-400 text-lg md:text-xl leading-relaxed">
-                أنشئ اتصالاً مباشراً (P2P) بين جهازين. <br/>
-                تبادل ملفات بأحجام خيالية. دردش بخصوصية تامة.
-            </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-2xl">
-            <div className="glass p-8 rounded-xl hover:border-neon-blue/50 transition-all cursor-pointer flex flex-col items-center text-center space-y-6 group"
-                 onClick={() => { setMode(AppMode.HOST); initHost(); }}>
-                <div className="w-20 h-20 bg-neon-blue/10 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Monitor size={40} className="text-neon-blue" />
-                </div>
-                <div>
-                    <h3 className="text-2xl font-bold mb-2">إنشاء غرفة</h3>
-                    <p className="text-gray-400">سأقوم بإنشاء الرابط ومشاركته.</p>
-                </div>
-                <Button className="w-full">بدء جلسة</Button>
-            </div>
-
-            <div className="glass p-8 rounded-xl hover:border-purple-500/50 transition-all cursor-pointer flex flex-col items-center text-center space-y-6 group"
-                 onClick={() => setMode(AppMode.GUEST)}>
-                <div className="w-20 h-20 bg-purple-500/10 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Smartphone size={40} className="text-purple-400" />
-                </div>
-                <div>
-                    <h3 className="text-2xl font-bold mb-2">انضمام لغرفة</h3>
-                    <p className="text-gray-400">لدي كود أو سأمسح الباركود.</p>
-                </div>
-                <Button variant="secondary" className="w-full">اتصال</Button>
-            </div>
-        </div>
-    </div>
-  );
-
-  const ConnectionView = () => {
-      // View when waiting to connect (Host showing QR, or Guest entering ID)
-      if (mode === AppMode.HOST) {
-          return (
-              <div className="max-w-md mx-auto glass rounded-xl p-8 space-y-6 text-center animate-fade-in">
-                  <h2 className="text-2xl font-bold mb-2">بانتظار الطرف الآخر...</h2>
-                  {peerId ? (
-                      <>
-                        <div className="bg-white p-4 rounded-xl mx-auto w-fit">
-                            <QRCodeSVG value={shareLink} size={200} />
-                        </div>
-                        <div className="space-y-4 pt-4">
-                            <div className="bg-black/50 p-3 rounded flex items-center justify-between gap-2 border border-white/10 text-right">
-                                <button onClick={() => navigator.clipboard.writeText(peerId)} className="text-gray-400 hover:text-white p-2">
-                                    <Copy size={16} />
-                                </button>
-                                <code className="text-sm text-neon-blue font-mono truncate dir-ltr text-center flex-1">{peerId}</code>
-                            </div>
-                            <p className="text-xs text-gray-500">شارك هذا الكود أو اجعل الطرف الآخر يمسح الباركود</p>
-                        </div>
-                      </>
-                  ) : (
-                      <div className="py-12"><div className="w-12 h-12 border-4 border-neon-blue border-t-transparent rounded-full animate-spin mx-auto"></div></div>
-                  )}
-                  <Button variant="secondary" onClick={resetApp} className="w-full text-xs mt-4">إلغاء</Button>
-              </div>
-          );
-      } 
-      
-      // Guest Connection View
-      return (
-          <div className="max-w-md mx-auto glass rounded-xl p-8 space-y-6 animate-fade-in">
-              <h2 className="text-2xl font-bold text-center">الاتصال بغرفة</h2>
-              
-              {!isScanning ? (
-                  <>
-                    <div className="space-y-2">
-                        <label className="text-sm text-gray-400">معرف الغرفة (Host ID)</label>
-                        <input 
-                            type="text" 
-                            value={remotePeerId}
-                            onChange={(e) => setRemotePeerId(e.target.value)}
-                            placeholder="لصق المعرف هنا..."
-                            className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-3 focus:border-purple-500 focus:outline-none transition-all font-mono text-center"
-                        />
-                    </div>
-                    <Button onClick={() => initGuest()} disabled={!remotePeerId} className="w-full">
-                        {connectionState === 'CONNECTING' ? 'جاري الاتصال...' : 'دخول'}
-                    </Button>
-                    
-                    <div className="relative py-2">
-                        <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10"></div></div>
-                        <div className="relative flex justify-center"><span className="bg-[#111] px-2 text-xs text-gray-500">أو</span></div>
-                    </div>
-
-                    <Button variant="secondary" className="w-full" onClick={startScanner}>
-                        <Scan size={18} /> مسح QR Code
-                    </Button>
-                  </>
-              ) : (
-                  <div className="space-y-4">
-                      <div className="overflow-hidden rounded-lg border border-neon-blue relative shadow-[0_0_20px_rgba(0,243,255,0.2)]">
-                          <div id="reader" className="w-full"></div>
-                      </div>
-                      <Button variant="secondary" onClick={stopScanner} className="w-full">إلغاء الكاميرا</Button>
-                  </div>
-              )}
-               <Button variant="secondary" onClick={resetApp} className="w-full text-xs !bg-transparent !border-0 text-gray-500 hover:text-white mt-2">رجوع</Button>
-          </div>
-      );
-  };
-
-  const SessionView = () => (
-      <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in p-4">
-          {/* Main Area: Files (2 Cols) */}
-          <div className="lg:col-span-2 glass rounded-xl p-6 flex flex-col h-[600px]">
-              <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
-                  <div>
-                      <h2 className="text-xl font-bold flex items-center gap-2">
-                          <FileIcon className="text-neon-blue" size={20} />
-                          المدير الملفات
-                      </h2>
-                      <p className="text-xs text-gray-400 mt-1">
-                          {transfers.length} ملفات في القائمة
-                      </p>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                      <input 
-                          type="file" 
-                          id="session-upload" 
-                          className="hidden" 
-                          multiple
-                          onChange={(e) => handleFileSelection(e.target.files)}
-                      />
-                      <Button onClick={() => document.getElementById('session-upload')?.click()}>
-                          <Upload size={18} /> إرفاق ملفات
-                      </Button>
-                  </div>
-              </div>
-
-              {/* Transfers List */}
-              <div className="flex-1 overflow-hidden relative">
-                   <FileList items={transfers} onAccept={acceptFiles} />
-              </div>
-          </div>
-
-          {/* Sidebar: Chat (1 Col) */}
-          <div className="lg:col-span-1 h-full">
-              <ChatBox 
-                messages={chatMessages} 
-                input={chatInput} 
-                setInput={setChatInput} 
-                onSend={handleSendChat} 
-                isConnected={connectionState === 'CONNECTED'}
-              />
-          </div>
-      </div>
-  );
-
   return (
     <div className="min-h-screen text-gray-200 selection:bg-neon-blue selection:text-black font-sans pb-12" dir="rtl">
-      {/* Header */}
       <header className="p-4 md:p-6 flex items-center justify-between border-b border-white/5 glass sticky top-0 z-50">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => mode !== AppMode.HOME && confirm('هل تريد الخروج؟') && resetApp()}>
             <div className="w-10 h-10 bg-neon-blue rounded-full flex items-center justify-center text-black shadow-[0_0_15px_rgba(0,243,255,0.5)]">
@@ -670,15 +651,34 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {mode === AppMode.HOME && <HomeView />}
+        {mode === AppMode.HOME && <HomeView onHost={() => { setMode(AppMode.HOST); initHost(); }} onGuest={() => setMode(AppMode.GUEST)} />}
         
-        {mode !== AppMode.HOME && connectionState !== 'CONNECTED' && <ConnectionView />}
+        {mode !== AppMode.HOME && connectionState !== 'CONNECTED' && <ConnectionView 
+            mode={mode}
+            peerId={peerId}
+            shareLink={shareLink}
+            remotePeerId={remotePeerId}
+            setRemotePeerId={setRemotePeerId}
+            initGuest={initGuest}
+            resetApp={resetApp}
+            isScanning={isScanning}
+            startScanner={startScanner}
+            stopScanner={stopScanner}
+            connectionState={connectionState}
+        />}
         
-        {connectionState === 'CONNECTED' && <SessionView />}
-
+        {connectionState === 'CONNECTED' && <SessionView 
+            transfers={transfers}
+            acceptFiles={acceptFiles}
+            handleFileSelection={handleFileSelection}
+            chatMessages={chatMessages}
+            chatInput={chatInput}
+            setChatInput={setChatInput}
+            handleSendChat={handleSendChat}
+            connectionState={connectionState}
+        />}
       </main>
 
-      {/* Footer Status */}
       {connectionState === 'CONNECTED' && (
         <footer className="fixed bottom-0 w-full p-2 bg-black/80 backdrop-blur-md border-t border-white/5 text-[10px] text-gray-600 flex justify-center px-6 font-mono z-40 dir-ltr">
             <span className="opacity-50">CONNECTED VIA WEBRTC DATA CHANNEL // P2P ENCRYPTED</span>

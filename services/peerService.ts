@@ -1,12 +1,11 @@
 import Peer, { DataConnection } from 'peerjs';
 import { FileMeta } from '../types';
 
-// Performance Tuning for Speed
-// 64KB is the recommended max chunk size for reliable WebRTC data channels in Chrome/Firefox.
-// Going higher can cause packet loss or blocking.
-const CHUNK_SIZE = 64 * 1024; 
-// Buffer threshold increased to keep the pipe full but avoid memory crashes.
-const BUFFER_THRESHOLD = 256 * 1024; 
+// Performance Tuning
+// Reduced to 16KB to ensure 'json' serialization doesn't choke the data channel.
+// Larger chunks with JSON serialization cause major lag/freezes.
+const CHUNK_SIZE = 16 * 1024; 
+const BUFFER_THRESHOLD = 64 * 1024; 
 
 export class PeerService {
   peer: Peer | null = null;
@@ -18,7 +17,6 @@ export class PeerService {
 
   initialize(id?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      // Create Peer with debug config
       this.peer = new Peer(id, { 
         debug: 1,
         config: {
@@ -50,9 +48,6 @@ export class PeerService {
     if (!this.peer) return;
     const conn = this.peer.connect(remoteId, { 
         reliable: true,
-        // Serialization: 'binary' is slightly faster for files, avoiding JSON overhead for raw chunks if strictly typed, 
-        // but 'json' (default in peerjs) is easier for mixed control/data messages. 
-        // We stick to default for simplicity in handling mixed 'ProtocolMessage' types.
     });
     this.handleConnection(conn);
   }
@@ -80,26 +75,22 @@ export class PeerService {
     });
   }
 
-  // Send list of files (Offer)
   sendOffer(files: FileMeta[]) {
     if (!this.connection) return;
     this.connection.send({ type: 'offer', files });
   }
 
-  // Accept specific files (Answer)
   sendAnswer(fileIds: string[]) {
     if (!this.connection) return;
     this.connection.send({ type: 'answer', fileIds });
   }
 
-  // Send Chat Message
   sendChat(text: string) {
       if (!this.connection) return;
       const timestamp = Date.now();
       this.connection.send({ type: 'chat', text, timestamp });
   }
 
-  // Send actual file data sequentially with optimized buffering
   async sendFiles(files: File[], acceptedIds: string[], onProgress: (fileId: string, bytesSent: number) => void) {
     if (!this.connection) throw new Error("No connection");
 
@@ -109,14 +100,13 @@ export class PeerService {
         const fileId = (file as any).id;
         let offset = 0;
         
-        // Loop for a single file
         while (offset < file.size) {
             if (!this.connection || !this.connection.open) break;
 
-            // Flow Control: If buffer is full, wait.
-            // Use dataChannel.bufferedAmount to check backpressure on the RTCDataChannel
-            if (this.connection.dataChannel.bufferedAmount > BUFFER_THRESHOLD) {
-                await new Promise(r => setTimeout(r, 10)); // Check again in 10ms
+            // Flow Control: Check bufferedAmount if available to avoid overwhelming the channel
+            const channel = this.connection.dataChannel;
+            if (channel && channel.bufferedAmount > BUFFER_THRESHOLD) {
+                await new Promise(r => setTimeout(r, 50)); // Wait for buffer to drain
                 continue;
             }
 
@@ -132,10 +122,8 @@ export class PeerService {
             offset += buffer.byteLength;
             onProgress(fileId, offset);
             
-            // Allow UI to breathe, but keep it tight for speed
-            if (offset % (CHUNK_SIZE * 5) === 0) {
-                 await new Promise(r => setTimeout(r, 0));
-            }
+            // Small yield to UI thread
+            await new Promise(r => setTimeout(r, 1));
         }
 
         this.connection.send({ type: 'file-complete', fileId });
