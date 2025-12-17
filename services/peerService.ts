@@ -1,10 +1,17 @@
 import Peer, { DataConnection } from 'peerjs';
 import { FileMeta } from '../types';
 
-// ULTRA PERFORMANCE TUNING
-const CHUNK_SIZE = 64 * 1024; // Decreased chunk size slightly to allow smoother interleaving for concurrent files
-const BUFFER_THRESHOLD = 16 * 1024 * 1024; // 16MB Buffer
-const UI_UPDATE_INTERVAL = 100;
+// STABILITY TUNING FOR MOBILE
+// 16KB is the safe MTU limit for WebRTC on mobile devices. 
+// Larger chunks (like 64KB) cause fragmentation overhead which overwhelms mobile CPUs during reassembly.
+const CHUNK_SIZE = 16 * 1024; 
+
+// Backpressure Control: 
+// Reduced from 16MB to 256KB. This forces the fast sender (Laptop) to pause frequently 
+// and wait for the slow receiver (Mobile) to process data, preventing memory crashes on mobile.
+const BUFFER_THRESHOLD = 256 * 1024; 
+
+const UI_UPDATE_INTERVAL = 200; 
 
 export class PeerService {
   peer: Peer | null = null;
@@ -48,7 +55,10 @@ export class PeerService {
 
   connect(remoteId: string) {
     if (!this.peer) return;
-    const conn = this.peer.connect(remoteId, { reliable: true });
+    const conn = this.peer.connect(remoteId, { 
+        reliable: true,
+        serialization: 'binary' 
+    });
     this.handleConnection(conn);
   }
 
@@ -56,20 +66,22 @@ export class PeerService {
     this.connection = conn;
     
     conn.on('open', () => {
-      console.log('Connection opened (High Perf Mode)');
+      console.log('Connection opened (Stable Mode)');
       if (this.onConnection) this.onConnection(conn);
     });
 
     conn.on('data', (data: any) => {
-      // BINARY PROTOCOL HANDLER
-      if (data instanceof ArrayBuffer) {
+      // HANDLE BINARY DATA (CHUNKS)
+      if (data instanceof ArrayBuffer || (data && data.constructor && data.constructor.name === 'ArrayBuffer')) {
+          // Robust ID decoding:
+          // 1. Extract 36 bytes header
           const headerView = new Uint8Array(data, 0, 36);
-          const fileId = new TextDecoder().decode(headerView);
+          // 2. Decode and REMOVE NULL BYTES/WHITESPACE (Crucial Fix for Mobile 0-byte issue)
+          const fileId = new TextDecoder().decode(headerView).replace(/\0/g, '').trim();
           
-          // If we received a chunk for a file we cancelled, ignore it
-          // This handles race conditions where chunks arrive after we sent cancel
           if (this.cancelledFiles.has(fileId)) return;
 
+          // 3. Extract payload
           const chunkData = data.slice(36);
           
           if (this.onData) {
@@ -80,8 +92,7 @@ export class PeerService {
               });
           }
       } else {
-          // If the peer sent a cancel signal, we need to handle it in the App level logic,
-          // but we also record it here to stop sending if we are the sender
+          // HANDLE JSON MESSAGES
           if (data.type === 'cancel' && data.fileId) {
              this.cancelledFiles.add(data.fileId);
           }
@@ -122,17 +133,11 @@ export class PeerService {
       this.connection.send({ type: 'cancel', fileId });
   }
 
-  // New Concurrent Sender logic
   async sendFiles(files: File[], acceptedIds: string[], onProgress: (fileId: string, bytesSent: number) => void) {
     if (!this.connection) throw new Error("No connection");
 
-    // Clean up cancelled set for new files to ensure we don't block re-tries immediately (optional logic)
-    // For now we just filter files.
-    
     const filesToSend = files.filter(f => acceptedIds.includes((f as any).id)); 
     
-    // Execute all file transfers in parallel (Concurrent)
-    // The WebRTC data channel will handle the buffering/interleaving via the loop checks
     const promises = filesToSend.map(file => this.sendFileIndividual(file, onProgress));
     
     await Promise.all(promises);
@@ -143,30 +148,29 @@ export class PeerService {
       if (!this.connection) return;
       
       const fileId = (file as any).id;
+      // Ensure strictly 36 bytes for ID
       const fileIdBytes = new TextEncoder().encode(fileId); 
       let offset = 0;
       
+      const channel = this.connection.dataChannel;
+
       while (offset < file.size) {
           if (!this.connection || !this.connection.open) break;
           
-          // Check if cancelled
           if (this.cancelledFiles.has(fileId)) {
-              console.log(`Transfer cancelled for ${fileId}`);
-              this.cancelledFiles.delete(fileId); // Cleanup memory
+              this.cancelledFiles.delete(fileId);
               return; 
           }
 
-          const channel = this.connection.dataChannel;
-          
-          // Shared Backpressure: Check if the SHARED channel is busy
-          if (channel && channel.bufferedAmount > BUFFER_THRESHOLD) {
-              await new Promise(r => setTimeout(r, 10)); // Yield to other files/event loop
-              continue;
+          // Strict Backpressure for Mobile Stability
+          while (channel.bufferedAmount > BUFFER_THRESHOLD) {
+              await new Promise(r => setTimeout(r, 5));
           }
 
           const slice = file.slice(offset, offset + CHUNK_SIZE);
           const chunkBuffer = await slice.arrayBuffer();
 
+          // Construct Packet: [ID (36 bytes)] + [Payload]
           const packet = new Uint8Array(36 + chunkBuffer.byteLength);
           packet.set(fileIdBytes, 0);
           packet.set(new Uint8Array(chunkBuffer), 36);
@@ -180,22 +184,15 @@ export class PeerService {
 
           offset += chunkBuffer.byteLength;
           
-          // Throttled UI update
           const now = Date.now();
           const lastUpdate = this.lastUpdateMap.get(fileId) || 0;
           if (offset >= file.size || (now - lastUpdate > UI_UPDATE_INTERVAL)) {
               onProgress(fileId, offset);
               this.lastUpdateMap.set(fileId, now);
-          }
-          
-          // Minimal yield to allow other concurrent file loops to send a chunk
-          // This ensures one large file doesn't block small ones completely
-          if (offset % (CHUNK_SIZE * 5) === 0) {
               await new Promise(r => setTimeout(r, 0)); 
           }
       }
 
-      // Check one last time before sending complete
       if (this.cancelledFiles.has(fileId)) return;
 
       this.connection.send({ type: 'file-complete', fileId });
