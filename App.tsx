@@ -384,7 +384,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Speed Calc Logic
+  // Speed Calc Logic - Returns undefined if throttled
   const calculateSpeed = (fileId: string, currentBytes: number) => {
       const now = Date.now();
       const record = speedTrackerRef.current.get(fileId);
@@ -393,7 +393,7 @@ const App: React.FC = () => {
           return 0;
       }
       const timeDiff = now - record.lastTime;
-      if (timeDiff < 500) return undefined; // Only update speed every 500ms for stability
+      if (timeDiff < 500) return undefined; // Only update speed every 500ms
       
       const bytesDiff = currentBytes - record.lastBytes;
       const speed = (bytesDiff / timeDiff) * 1000; 
@@ -461,17 +461,20 @@ const App: React.FC = () => {
              if (filesObjects.length > 0) {
                  peerService.sendFiles(filesObjects, Array.from(acceptedIds), (fileId, bytesSent) => {
                     const speed = calculateSpeed(fileId, bytesSent);
-                    setTransfers(prev => prev.map(t => {
-                        if (t.id === fileId) {
-                            return { 
-                                ...t, 
-                                progress: (bytesSent / t.meta.size) * 100, 
-                                state: TransferState.TRANSFERRING,
-                                speed: speed !== undefined ? speed : t.speed
-                            };
-                        }
-                        return t;
-                    }));
+                    // Sender throttle logic is in peerService, but we double check here
+                    if (speed !== undefined || bytesSent === 0) {
+                        setTransfers(prev => prev.map(t => {
+                            if (t.id === fileId) {
+                                return { 
+                                    ...t, 
+                                    progress: (bytesSent / t.meta.size) * 100, 
+                                    state: TransferState.TRANSFERRING,
+                                    speed: speed !== undefined ? speed : t.speed
+                                };
+                            }
+                            return t;
+                        }));
+                    }
                  }).catch(e => { console.error(e); setError("خطأ نقل"); });
              }
         }
@@ -491,18 +494,21 @@ const App: React.FC = () => {
 
             const speed = calculateSpeed(fileId, currentBytes);
             
-            // Always update state on chunks if it's the first chunk or throttled
-            setTransfers(prev => prev.map(t => {
-                if (t.id === fileId) {
-                    return { 
-                        ...t, 
-                        progress: (currentBytes / t.meta.size) * 100,
-                        state: TransferState.TRANSFERRING,
-                        speed: speed !== undefined ? speed : t.speed
-                    };
-                }
-                return t;
-            }));
+            // CRITICAL FIX: Throttle receiver UI updates.
+            // Only call setTransfers if speed was recalculated (approx every 500ms) or first byte
+            if (speed !== undefined || currentBytes < 100000) {
+                setTransfers(prev => prev.map(t => {
+                    if (t.id === fileId) {
+                        return { 
+                            ...t, 
+                            progress: (currentBytes / t.meta.size) * 100,
+                            state: TransferState.TRANSFERRING,
+                            speed: speed !== undefined ? speed : t.speed
+                        };
+                    }
+                    return t;
+                }));
+            }
         }
         else if (data.type === 'file-complete') {
             const { fileId } = data;

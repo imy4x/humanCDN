@@ -1,17 +1,10 @@
 import Peer, { DataConnection } from 'peerjs';
 import { FileMeta } from '../types';
 
-// STABILITY TUNING FOR MOBILE
-// 16KB is the safe MTU limit for WebRTC on mobile devices. 
-// Larger chunks (like 64KB) cause fragmentation overhead which overwhelms mobile CPUs during reassembly.
-const CHUNK_SIZE = 16 * 1024; 
-
-// Backpressure Control: 
-// Reduced from 16MB to 256KB. This forces the fast sender (Laptop) to pause frequently 
-// and wait for the slow receiver (Mobile) to process data, preventing memory crashes on mobile.
-const BUFFER_THRESHOLD = 256 * 1024; 
-
-const UI_UPDATE_INTERVAL = 200; 
+// --- PERFORMANCE CONFIGURATION ---
+const CHUNK_SIZE = 64 * 1024; // 64KB chunks
+const BUFFER_THRESHOLD = 1024 * 1024; // 1MB Buffer (Reduced slightly for tighter control)
+const UI_UPDATE_INTERVAL = 200; // ms
 
 export class PeerService {
   peer: Peer | null = null;
@@ -66,22 +59,21 @@ export class PeerService {
     this.connection = conn;
     
     conn.on('open', () => {
-      console.log('Connection opened (Stable Mode)');
+      console.log('Connection opened (Sequential Turbo Mode)');
+      if (conn.dataChannel) {
+          conn.dataChannel.bufferedAmountLowThreshold = 0;
+      }
       if (this.onConnection) this.onConnection(conn);
     });
 
     conn.on('data', (data: any) => {
-      // HANDLE BINARY DATA (CHUNKS)
+      // FAST PATH: Binary Chunk Handling
       if (data instanceof ArrayBuffer || (data && data.constructor && data.constructor.name === 'ArrayBuffer')) {
-          // Robust ID decoding:
-          // 1. Extract 36 bytes header
           const headerView = new Uint8Array(data, 0, 36);
-          // 2. Decode and REMOVE NULL BYTES/WHITESPACE (Crucial Fix for Mobile 0-byte issue)
           const fileId = new TextDecoder().decode(headerView).replace(/\0/g, '').trim();
           
           if (this.cancelledFiles.has(fileId)) return;
 
-          // 3. Extract payload
           const chunkData = data.slice(36);
           
           if (this.onData) {
@@ -92,7 +84,7 @@ export class PeerService {
               });
           }
       } else {
-          // HANDLE JSON MESSAGES
+          // CONTROL PATH: JSON Messages
           if (data.type === 'cancel' && data.fileId) {
              this.cancelledFiles.add(data.fileId);
           }
@@ -138,9 +130,12 @@ export class PeerService {
 
     const filesToSend = files.filter(f => acceptedIds.includes((f as any).id)); 
     
-    const promises = filesToSend.map(file => this.sendFileIndividual(file, onProgress));
+    // CRITICAL CHANGE: Sequential Processing
+    // Sending files one by one ensures max bandwidth utilization and prevents congestion
+    for (const file of filesToSend) {
+        await this.sendFileIndividual(file, onProgress);
+    }
     
-    await Promise.all(promises);
     this.connection.send({ type: 'all-complete' });
   }
 
@@ -148,11 +143,13 @@ export class PeerService {
       if (!this.connection) return;
       
       const fileId = (file as any).id;
-      // Ensure strictly 36 bytes for ID
       const fileIdBytes = new TextEncoder().encode(fileId); 
       let offset = 0;
       
       const channel = this.connection.dataChannel;
+      if (!channel) throw new Error("Data channel not ready");
+
+      console.log(`Starting transfer: ${file.name}`);
 
       while (offset < file.size) {
           if (!this.connection || !this.connection.open) break;
@@ -162,15 +159,33 @@ export class PeerService {
               return; 
           }
 
-          // Strict Backpressure for Mobile Stability
-          while (channel.bufferedAmount > BUFFER_THRESHOLD) {
-              await new Promise(r => setTimeout(r, 5));
+          // ROBUST BACKPRESSURE
+          if (channel.bufferedAmount > BUFFER_THRESHOLD) {
+              await new Promise<void>(resolve => {
+                  let resolved = false;
+                  const handler = () => {
+                      if (resolved) return;
+                      resolved = true;
+                      channel.removeEventListener('bufferedamountlow', handler);
+                      resolve();
+                  };
+                  channel.addEventListener('bufferedamountlow', handler);
+                  
+                  // Watchdog: If browser doesn't fire event in 500ms, check manually
+                  // This fixes "stuck" transfers on some mobile browsers
+                  setTimeout(() => {
+                      if (!resolved) {
+                          resolved = true;
+                          channel.removeEventListener('bufferedamountlow', handler);
+                          resolve();
+                      }
+                  }, 500);
+              });
           }
 
           const slice = file.slice(offset, offset + CHUNK_SIZE);
           const chunkBuffer = await slice.arrayBuffer();
 
-          // Construct Packet: [ID (36 bytes)] + [Payload]
           const packet = new Uint8Array(36 + chunkBuffer.byteLength);
           packet.set(fileIdBytes, 0);
           packet.set(new Uint8Array(chunkBuffer), 36);
@@ -178,18 +193,20 @@ export class PeerService {
           try {
               this.connection.send(packet);
           } catch (e) {
-              console.error("Send error", e);
-              break;
+              console.error("Send error, retrying...", e);
+              await new Promise(r => setTimeout(r, 200));
+              continue; 
           }
 
           offset += chunkBuffer.byteLength;
           
+          // Throttle callbacks
           const now = Date.now();
           const lastUpdate = this.lastUpdateMap.get(fileId) || 0;
           if (offset >= file.size || (now - lastUpdate > UI_UPDATE_INTERVAL)) {
-              onProgress(fileId, offset);
+              // Use setImmediate-like behavior
+              setTimeout(() => onProgress(fileId, offset), 0);
               this.lastUpdateMap.set(fileId, now);
-              await new Promise(r => setTimeout(r, 0)); 
           }
       }
 
