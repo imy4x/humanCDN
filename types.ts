@@ -31,10 +31,18 @@ export interface TransferItem {
   blobUrl?: string; // On receiver side
 }
 
+export interface ChatMessage {
+  id: string;
+  sender: 'me' | 'peer';
+  text: string;
+  timestamp: number;
+}
+
 // Data Protocol
 export type ProtocolMessage = 
   | { type: 'offer'; files: FileMeta[] } // Sender proposes files
   | { type: 'answer'; fileIds: string[] } // Receiver accepts specific files
   | { type: 'chunk'; fileId: string; data: ArrayBuffer }
   | { type: 'file-complete'; fileId: string }
-  | { type: 'all-complete' };
+  | { type: 'all-complete' }
+  | { type: 'chat'; text: string; timestamp: number };
