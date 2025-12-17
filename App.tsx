@@ -15,7 +15,11 @@ import {
   Send,
   Scan,
   Monitor,
-  Smartphone
+  Smartphone,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  Activity,
+  HardDrive
 } from 'lucide-react';
 import { Button } from './components/Button';
 import { AppMode, TransferState, FileMeta, TransferItem, ChatMessage } from './types';
@@ -29,6 +33,12 @@ const formatBytes = (bytes: number, decimals = 2) => {
   const sizes = ['بايت', 'ك.ب', 'م.ب', 'ج.ب', 'ت.ب'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+};
+
+// Utility to format speed
+const formatSpeed = (bytesPerSecond: number | undefined) => {
+    if (!bytesPerSecond) return '';
+    return `${formatBytes(bytesPerSecond)}/ث`;
 };
 
 // --- ISOLATED COMPONENTS (Fixes Focus Issue) ---
@@ -47,7 +57,7 @@ const ChatBox = ({ messages, input, setInput, onSend, isConnected }: {
     }, [messages]);
 
     return (
-        <div className="glass rounded-xl flex flex-col h-[400px] md:h-[500px] border border-white/10 overflow-hidden mt-6 lg:mt-0">
+        <div className="glass rounded-xl flex flex-col h-[400px] md:h-full border border-white/10 overflow-hidden mt-6 lg:mt-0">
             <div className="p-4 bg-white/5 border-b border-white/10 flex items-center gap-2">
                 <MessageSquare size={18} className="text-neon-blue"/>
                 <span className="font-bold text-sm">شات مشفر (P2P)</span>
@@ -97,9 +107,9 @@ const ChatBox = ({ messages, input, setInput, onSend, isConnected }: {
     );
 };
 
-const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: string[]) => void }) => (
-    <div className="space-y-3 max-h-[500px] overflow-y-auto pl-2 custom-scrollbar">
-        {items.map(item => (
+const FileList = ({ items, onAccept, type }: { items: TransferItem[], onAccept: (ids: string[]) => void, type: 'incoming' | 'outgoing' }) => (
+    <div className="space-y-3 max-h-[300px] overflow-y-auto pl-2 custom-scrollbar">
+        {items.filter(item => type === 'incoming' ? item.isIncoming : !item.isIncoming).map(item => (
             <div key={item.id} className={`p-4 rounded-lg flex flex-col gap-3 border transition-all ${
                 item.isIncoming 
                 ? 'bg-purple-500/5 border-purple-500/20' 
@@ -119,21 +129,19 @@ const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: 
                     
                     <div className="flex-1 min-w-0 text-right">
                         <div className="flex justify-between items-center mb-1">
-                            <span className={`text-[10px] px-1.5 rounded border ${
-                                item.isIncoming 
-                                ? 'border-purple-500/30 text-purple-400' 
-                                : 'border-neon-blue/30 text-neon-blue'
-                            }`}>
-                                {item.isIncoming ? 'وارد' : 'صادر'}
-                            </span>
                             <span className="text-xs text-gray-500">{formatBytes(item.meta.size)}</span>
+                            {item.state === TransferState.TRANSFERRING && item.speed && (
+                                <span className="text-xs text-neon-blue font-mono dir-ltr flex items-center gap-1">
+                                    <Activity size={10} /> {formatSpeed(item.speed)}
+                                </span>
+                            )}
                         </div>
                         <p className="font-bold truncate text-sm" title={item.meta.name}>{item.meta.name}</p>
                         <p className="text-xs text-gray-400 mt-1">
                           {item.state === TransferState.PENDING && (item.isIncoming ? 'بانتظار قبولك' : 'بانتظار قبول الطرف الآخر')}
-                          {item.state === TransferState.QUEUED && 'في الطابور...'}
+                          {item.state === TransferState.QUEUED && 'في الطابور (جاهز للإرسال)...'}
                           {item.state === TransferState.TRANSFERRING && `جاري النقل ${item.progress.toFixed(0)}%`}
-                          {item.state === TransferState.COMPLETED && 'اكتمل'}
+                          {item.state === TransferState.COMPLETED && 'اكتمل بنجاح'}
                         </p>
                     </div>
 
@@ -165,10 +173,9 @@ const FileList = ({ items, onAccept }: { items: TransferItem[], onAccept: (ids: 
                 )}
             </div>
         ))}
-        {items.length === 0 && (
-            <div className="text-center text-gray-500 py-12 border-2 border-dashed border-white/5 rounded-xl">
-                <FileIcon size={40} className="mx-auto mb-2 opacity-20" />
-                <p>لا توجد ملفات متبادلة</p>
+        {items.filter(item => type === 'incoming' ? item.isIncoming : !item.isIncoming).length === 0 && (
+            <div className="text-center text-gray-500 py-8 border border-dashed border-white/5 rounded-lg">
+                <p className="text-xs opacity-50">لا توجد ملفات {type === 'incoming' ? 'واردة' : 'صادرة'}</p>
             </div>
         )}
     </div>
@@ -286,50 +293,91 @@ const ConnectionView = ({
     );
 };
 
-const SessionView = ({ transfers, acceptFiles, handleFileSelection, chatMessages, chatInput, setChatInput, handleSendChat, connectionState }: any) => (
-    <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in p-4">
-        <div className="lg:col-span-2 glass rounded-xl p-6 flex flex-col h-[600px]">
-            <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
-                <div>
-                    <h2 className="text-xl font-bold flex items-center gap-2">
-                        <FileIcon className="text-neon-blue" size={20} />
-                        المدير الملفات
-                    </h2>
-                    <p className="text-xs text-gray-400 mt-1">
-                        {transfers.length} ملفات في القائمة
-                    </p>
-                </div>
-                
-                <div className="flex gap-2">
-                    <input 
-                        type="file" 
-                        id="session-upload" 
-                        className="hidden" 
-                        multiple
-                        // Removed accept attribute to allow all files/apps
-                        onChange={(e) => handleFileSelection(e.target.files)}
-                    />
-                    <Button onClick={() => document.getElementById('session-upload')?.click()}>
-                        <Upload size={18} /> إرفاق ملفات/تطبيقات
-                    </Button>
-                </div>
-            </div>
-            <div className="flex-1 overflow-hidden relative">
-                <FileList items={transfers} onAccept={acceptFiles} />
-            </div>
-        </div>
+const SessionView = ({ transfers, acceptFiles, handleFileSelection, chatMessages, chatInput, setChatInput, handleSendChat, connectionState }: any) => {
+    // Separate transfers for counters and stats
+    const incomingFiles = transfers.filter((t: any) => t.isIncoming);
+    const outgoingFiles = transfers.filter((t: any) => !t.isIncoming);
 
-        <div className="lg:col-span-1 h-full">
-            <ChatBox 
-            messages={chatMessages} 
-            input={chatInput} 
-            setInput={setChatInput} 
-            onSend={handleSendChat} 
-            isConnected={connectionState === 'CONNECTED'}
-            />
+    const totalSentBytes = outgoingFiles.reduce((acc: number, t: any) => acc + t.meta.size, 0);
+    const totalReceivedBytes = incomingFiles.reduce((acc: number, t: any) => acc + t.meta.size, 0);
+
+    return (
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in p-4 h-[calc(100vh-140px)]">
+            <div className="lg:col-span-2 glass rounded-xl p-6 flex flex-col h-full overflow-hidden">
+                <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4 shrink-0">
+                    <div>
+                        <h2 className="text-xl font-bold flex items-center gap-2">
+                            <FileIcon className="text-neon-blue" size={20} />
+                            مدير الملفات
+                        </h2>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                        <input 
+                            type="file" 
+                            id="session-upload" 
+                            className="hidden" 
+                            multiple
+                            accept="*/*" // Explicitly allow all file types for mobile compatibility
+                            onChange={(e) => handleFileSelection(e.target.files)}
+                        />
+                        <Button onClick={() => document.getElementById('session-upload')?.click()}>
+                            <Upload size={18} /> إرفاق ملفات/تطبيقات
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Stats Summary */}
+                <div className="grid grid-cols-2 gap-4 mb-6 shrink-0">
+                    <div className="bg-neon-blue/5 border border-neon-blue/20 rounded-lg p-3 md:p-4 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+                         <div className="absolute inset-0 bg-neon-blue/5 translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
+                         <ArrowUpCircle className="text-neon-blue mb-2 opacity-80" size={24} />
+                         <span className="text-gray-400 text-xs mb-1 relative z-10">إجمالي المرسل</span>
+                         <span className="text-lg md:text-2xl font-bold text-neon-blue dir-ltr relative z-10">{formatBytes(totalSentBytes)}</span>
+                         <span className="text-xs text-gray-500 mt-1 relative z-10">{outgoingFiles.length} ملفات</span>
+                    </div>
+                    <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg p-3 md:p-4 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+                         <div className="absolute inset-0 bg-purple-500/5 translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
+                         <ArrowDownCircle className="text-purple-400 mb-2 opacity-80" size={24} />
+                         <span className="text-gray-400 text-xs mb-1 relative z-10">إجمالي المستلم</span>
+                         <span className="text-lg md:text-2xl font-bold text-purple-400 dir-ltr relative z-10">{formatBytes(totalReceivedBytes)}</span>
+                         <span className="text-xs text-gray-500 mt-1 relative z-10">{incomingFiles.length} ملفات</span>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-6 pr-2">
+                    {/* Outgoing Section */}
+                    <div>
+                        <div className="flex items-center gap-2 mb-3 text-neon-blue">
+                            <ArrowUpCircle size={16} />
+                            <h3 className="font-bold text-sm">المرسلة (الصادر) <span className="opacity-50 text-xs">({outgoingFiles.length})</span></h3>
+                        </div>
+                        <FileList items={transfers} onAccept={acceptFiles} type="outgoing" />
+                    </div>
+
+                    {/* Incoming Section */}
+                    <div className="pt-4 border-t border-white/5">
+                        <div className="flex items-center gap-2 mb-3 text-purple-400">
+                            <ArrowDownCircle size={16} />
+                            <h3 className="font-bold text-sm">المستلمة (الوارد) <span className="opacity-50 text-xs">({incomingFiles.length})</span></h3>
+                        </div>
+                        <FileList items={transfers} onAccept={acceptFiles} type="incoming" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="lg:col-span-1 h-full min-h-[400px]">
+                <ChatBox 
+                messages={chatMessages} 
+                input={chatInput} 
+                setInput={setChatInput} 
+                onSend={handleSendChat} 
+                isConnected={connectionState === 'CONNECTED'}
+                />
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
 // --- MAIN APP COMPONENT ---
 
@@ -352,6 +400,10 @@ const App: React.FC = () => {
 
   const receivedChunks = useRef<Map<string, ArrayBuffer[]>>(new Map());
   const receivedBytes = useRef<Map<string, number>>(new Map());
+  
+  // Track UI updates and Speed calculations
+  const lastUiUpdate = useRef<Map<string, number>>(new Map());
+  const speedTrackerRef = useRef<Map<string, { lastBytes: number, lastTime: number }>>(new Map());
 
   // Sync ref with state
   useEffect(() => {
@@ -369,6 +421,28 @@ const App: React.FC = () => {
       }
     }
   }, []);
+
+  const calculateSpeed = (fileId: string, currentBytes: number) => {
+      const now = Date.now();
+      const record = speedTrackerRef.current.get(fileId);
+      
+      if (!record) {
+          speedTrackerRef.current.set(fileId, { lastBytes: currentBytes, lastTime: now });
+          return 0;
+      }
+
+      const timeDiff = now - record.lastTime;
+      // Calculate speed only if time difference is reasonable (prevent divide by zero)
+      // Since this is called within throttled callbacks (approx 100ms), we can calculate continuously
+      if (timeDiff === 0) return 0; 
+
+      const bytesDiff = currentBytes - record.lastBytes;
+      const speed = (bytesDiff / timeDiff) * 1000; // Bytes per second
+
+      // Update ref
+      speedTrackerRef.current.set(fileId, { lastBytes: currentBytes, lastTime: now });
+      return speed;
+  };
 
   const handleFileSelection = (fileList: FileList | null) => {
     if (!fileList) return;
@@ -440,12 +514,18 @@ const App: React.FC = () => {
              
              if (filesObjects.length > 0) {
                  peerService.sendFiles(filesObjects, Array.from(acceptedIds), (fileId, bytesSent) => {
+                    // Calculate Speed
+                    const speed = calculateSpeed(fileId, bytesSent);
+
+                    // UI Throttling for sending is handled inside peerService now, 
+                    // but we still need to update state. 
                     setTransfers(prev => prev.map(t => {
                         if (t.id === fileId) {
                             return { 
                                 ...t, 
                                 progress: (bytesSent / t.meta.size) * 100, 
-                                state: TransferState.TRANSFERRING 
+                                state: TransferState.TRANSFERRING,
+                                speed: speed
                             };
                         }
                         return t;
@@ -469,12 +549,25 @@ const App: React.FC = () => {
             const currentBytes = (receivedBytes.current.get(fileId) || 0) + chunkData.byteLength;
             receivedBytes.current.set(fileId, currentBytes);
 
-            setTransfers(prev => prev.map(t => {
-                if (t.id === fileId) {
-                    return { ...t, progress: (currentBytes / t.meta.size) * 100 };
-                }
-                return t;
-            }));
+            // THROTTLE INCOMING UI UPDATES
+            const now = Date.now();
+            const lastUpdate = lastUiUpdate.current.get(fileId) || 0;
+            
+            if (now - lastUpdate > 100) { // 100ms throttle
+                const speed = calculateSpeed(fileId, currentBytes);
+
+                setTransfers(prev => prev.map(t => {
+                    if (t.id === fileId) {
+                        return { 
+                            ...t, 
+                            progress: (currentBytes / t.meta.size) * 100,
+                            speed: speed
+                        };
+                    }
+                    return t;
+                }));
+                lastUiUpdate.current.set(fileId, now);
+            }
         }
         else if (data.type === 'file-complete') {
             const { fileId } = data;
@@ -483,9 +576,14 @@ const App: React.FC = () => {
                     const chunks = receivedChunks.current.get(fileId) || [];
                     const blob = new Blob(chunks, { type: t.meta.type });
                     const url = URL.createObjectURL(blob);
+                    
+                    // Cleanup
                     receivedChunks.current.delete(fileId);
                     receivedBytes.current.delete(fileId);
-                    return { ...t, state: TransferState.COMPLETED, blobUrl: url, progress: 100 };
+                    lastUiUpdate.current.delete(fileId);
+                    speedTrackerRef.current.delete(fileId);
+
+                    return { ...t, state: TransferState.COMPLETED, blobUrl: url, progress: 100, speed: 0 };
                 }
                 return t;
             }));
@@ -609,6 +707,8 @@ const App: React.FC = () => {
     setIsScanning(false);
     receivedChunks.current.clear();
     receivedBytes.current.clear();
+    lastUiUpdate.current.clear();
+    speedTrackerRef.current.clear();
     window.history.pushState("", document.title, window.location.pathname + window.location.search);
   };
 

@@ -28,6 +28,7 @@ export interface TransferItem {
   state: TransferState;
   blobUrl?: string; // If exists, I am the RECEIVER and download is ready
   isIncoming: boolean; // Helper to know if I am sending or receiving
+  speed?: number; // Bytes per second
 }
 
 export interface ChatMessage {
