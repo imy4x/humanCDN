@@ -1,9 +1,7 @@
 export enum AppMode {
   HOME = 'HOME',
-  SENDER = 'SENDER', // Host sending files
-  RECEIVER = 'RECEIVER', // Guest receiving files
-  REQUESTER = 'REQUESTER', // Host requesting files (Receiver Host)
-  UPLOADER = 'UPLOADER', // Guest uploading files (Sender Guest)
+  HOST = 'HOST',   // The one who created the room
+  GUEST = 'GUEST', // The one joining the room
 }
 
 export interface FileMeta {
@@ -15,8 +13,8 @@ export interface FileMeta {
 
 export enum TransferState {
   IDLE = 'IDLE',
-  PENDING = 'PENDING', // Waiting for acceptance
-  QUEUED = 'QUEUED',
+  PENDING = 'PENDING', // Remote side sees this, waiting to accept
+  QUEUED = 'QUEUED',   // Sender sees this, waiting for remote to accept
   TRANSFERRING = 'TRANSFERRING',
   COMPLETED = 'COMPLETED',
   ERROR = 'ERROR',
@@ -24,11 +22,12 @@ export enum TransferState {
 
 export interface TransferItem {
   id: string;
-  file?: File; // Only available on sender side
+  file?: File; // If exists, I am the SENDER
   meta: FileMeta;
   progress: number;
   state: TransferState;
-  blobUrl?: string; // On receiver side
+  blobUrl?: string; // If exists, I am the RECEIVER and download is ready
+  isIncoming: boolean; // Helper to know if I am sending or receiving
 }
 
 export interface ChatMessage {
@@ -40,8 +39,8 @@ export interface ChatMessage {
 
 // Data Protocol
 export type ProtocolMessage = 
-  | { type: 'offer'; files: FileMeta[] } // Sender proposes files
-  | { type: 'answer'; fileIds: string[] } // Receiver accepts specific files
+  | { type: 'offer'; files: FileMeta[] } 
+  | { type: 'answer'; fileIds: string[] } 
   | { type: 'chunk'; fileId: string; data: ArrayBuffer }
   | { type: 'file-complete'; fileId: string }
   | { type: 'all-complete' }
