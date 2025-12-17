@@ -1,0 +1,7 @@
+{
+  "name": "The Human CDN",
+  "description": "A serverless, peer-to-peer file transfer tool using WebRTC. Share massive files directly between devices without cloud uploads.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
