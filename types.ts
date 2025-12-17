@@ -18,6 +18,7 @@ export enum TransferState {
   TRANSFERRING = 'TRANSFERRING',
   COMPLETED = 'COMPLETED',
   ERROR = 'ERROR',
+  CANCELLED = 'CANCELLED',
 }
 
 export interface TransferItem {
@@ -45,4 +46,5 @@ export type ProtocolMessage =
   | { type: 'chunk'; fileId: string; data: ArrayBuffer }
   | { type: 'file-complete'; fileId: string }
   | { type: 'all-complete' }
-  | { type: 'chat'; text: string; timestamp: number };
+  | { type: 'chat'; text: string; timestamp: number }
+  | { type: 'cancel'; fileId: string };
