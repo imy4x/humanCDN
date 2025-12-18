@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  --color-neon-blue: #00f3ff;
+  --color-neon-purple: #bc13fe;
+  --color-neon-green: #0aff0a;
+  --color-neon-dark: #050505;
+  --color-neon-panel: #111111;
+
+  --font-family-sans: 'Tajawal', 'Segoe UI', sans-serif;
+  --font-family-mono: 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace';
+
+  --animate-fade-in: fadeIn 0.5s ease-out;
+  --animate-pulse-fast: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-spin-slow: spin 3s linear infinite;
+
+  @keyframes fadeIn {
+    0% { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+}
+
+body {
+  background-color: var(--color-neon-dark);
+  color: #e0e0e0;
+  overflow-x: hidden;
+  font-family: var(--font-family-sans);
+}
+
+@utility glass {
+  background-color: rgba(17, 17, 17, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@utility glass-hover {
+  transition: all 0.3s;
+  &:hover {
+    background-color: rgba(17, 17, 17, 0.9);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+}
+
+
+@utility neon-text {
+  text-shadow: 0 0 5px rgba(0, 243, 255, 0.5), 0 0 10px rgba(0, 243, 255, 0.3);
+}
+
+@utility custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 8px;
+    left: 0;
+  }
+  &::-webkit-scrollbar-track {
+    background: #111;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: #00f3ff;
+  }
+}
+
+@utility dir-rtl {
+  direction: rtl;
+}
+
+
+.grid-bg {
+  background-size: 50px 50px;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  @apply fixed inset-0 -z-10 pointer-events-none;
+}
